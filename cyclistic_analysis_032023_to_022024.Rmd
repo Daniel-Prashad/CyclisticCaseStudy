@@ -1,0 +1,428 @@
+---
+title: "Cyclistic Case Study"
+author: "Daniel Prashad"
+date: "2024-04-10"
+output: html_document
+---
+
+# Google Data Analytics Certification Capstone Project: Cyclistic Case Study
+
+In this case study, I am a data analyst working on the marketing team at a Chicago-based bike-share company called Cyclistic. The director of marketing wants to create a marketing strategy to convert casual riders (those who purchase single-ride or full-day passes) to annual members. My team wants to first understand how casual riders and annual members use Cyclistic bikes differently. Using these insights, the marketing team can then start to devise an effective marketing strategy.
+
+The subsequent analysis follows the six phases outlined in Google's data analysis process: Ask, Prepare, Process, Analyze, Share and Act. 
+
+
+### **Ask**
+The business task presented in this case study is to determine the differences between how casual riders and annual members use Cyclistic bikes. This information will help Cyclistic's marketing team devise a strategy to convert casual riders into annual members, making the converted users more profitable. The insights gained from the analysis will be provided in this report, as well as a presentation which summarizes the project's findings with supporting visualizations.
+
+
+
+### **Prepare**
+The data used in this project was retrieved from Cyclistic's repository of historical data, which can be found here:
+<https://divvy-tripdata.s3.amazonaws.com/index.html>
+
+
+#### Load the necessary packages for analysis
+```{r setup environment, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(hms)
+library(geosphere)
+library (scales)
+```
+
+
+#### Import the data
+The data is organized into .csv files by month of use and contains a table where each record holds information pertaining to a specific ride.
+This information includes: the ride id, type of bike used, start and end times of the ride, start and end station names and ids, start and end latitudes and longitudes, and finally whether the rider was a member or casual rider. The next code chunk reads, stores and combines the previous 12 months of data.
+
+```{r load data}
+# read in data for last 12 months
+rides_2023_03 = read.csv("2023_03_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_04 = read.csv("2023_04_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_05 = read.csv("2023_05_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_06 = read.csv("2023_06_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_07 = read.csv("2023_07_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_08 = read.csv("2023_08_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_09 = read.csv("2023_09_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_10 = read.csv("2023_10_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_11 = read.csv("2023_11_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2023_12 = read.csv("2023_12_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2024_01 = read.csv("2024_01_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+rides_2024_02 = read.csv("2024_02_tripdata.csv", sep=",", header=TRUE, na.strings=c("", " ", "NA"))
+
+# combine the data into one table
+combined_raw_data = rbind(rides_2023_03, rides_2023_04, rides_2023_05,
+                          rides_2023_06, rides_2023_07, rides_2023_08,
+                          rides_2023_09, rides_2023_10, rides_2023_11,
+                          rides_2023_12, rides_2024_01, rides_2024_02)
+```
+
+
+#### Initial data exploration
+After importing the data, we check that the data set does not contain any duplicate rows.
+```{r check for duplicates}
+# check if there are any duplicate rows or ride_ids
+cat(sprintf(" Number of duplicate rows: %d\n", sum(duplicated(combined_raw_data))),
+    sprintf("Are all ride_ids unique: %s", n_distinct(combined_raw_data$ride_id) == nrow(combined_raw_data)))
+```
+
+
+Now, taking a quick look at the first 6 rows, we see that there is missing data, specifically the end_station_name and end_station_id columns.
+```{r head raw data}
+head(combined_raw_data)
+```
+
+
+Now that we know that our data set contains incomplete data, lets dive deeper and find out which columns have missing values.
+From the code chunk below, we see that quite a lot of geographical data that is missing, specifically the start and end station names and ids, as well as end latitudes and longitudes. The missing data makes up almost 5% of the data set.
+```{r identify missing values}
+# display the number of missing values for each row
+colSums(is.na(combined_raw_data))
+
+# show the amount and percentage of missing data
+num_missing_values = sum(colSums(is.na(combined_raw_data)))
+num_possible_values = nrow(combined_raw_data) * length(colnames(combined_raw_data))
+cat(sprintf(" Number of missing values: %d\n", num_missing_values),
+    sprintf("Number of possible values: %d\n", num_possible_values),
+    sprintf("Percentage of missing data: %0.2f%%", 100*num_missing_values/num_possible_values))
+```
+
+
+Next, we will ensure that any data that should not be a string type is of the correct type.
+Note that while the start and end latitudes and longitudes are correct, started_at and ended_at should both be date-time type. This error will be corrected in the Process phase.
+```{r check datatypes}
+# check the datatype of each column that should not be a string
+cat(sprintf(" Type of started_at: %s\n", typeof(combined_raw_data$started_at)),
+    sprintf("Type of ended_at: %s\n",typeof(combined_raw_data$ended_at)),
+    sprintf("Type of start_lat: %s\n",typeof(combined_raw_data$start_lat)),
+    sprintf("Type of start_lng: %s\n",typeof(combined_raw_data$start_lng)),
+    sprintf("Type of end_lat: %s\n",typeof(combined_raw_data$end_lat)),
+    sprintf("Type of end_lng: %s",typeof(combined_raw_data$end_lng)))
+```
+
+
+Finally, we will check for rides that have a start time that is greater than or equal to its end time. We see that there are 1377 occurrences of this. In these cases, the ride was likely either cancelled or another error occurred while tracking the ride. Again, this will be corrected in the process phase.
+```{r check for incorrect times}
+# display number of rows where start time is greater than or equal to end time
+combined_raw_data %>%
+  filter(started_at >= ended_at) %>%
+  nrow
+```
+
+
+#### Summary of the Prepare Phase
+In this phase, we retrieved the latest 12 months of historical data from Cyclistic's data repository. After taking a quick look at the data set, we identified that it contains missing data; so we can say that the data is not comprehensive, as about 5% of the entire data set contains missing values. For this reason, as well as the incorrect typing of columns and the existence of inaccurate start and end times, we can also say that the data set is not exactly reliable. However, since the latest 12 months of data was retrieved from Cyclistic's repository, we can say that it is current, original and cited.
+
+
+
+### **Process**
+The goal of this phase is to clean the data to correct the mistakes found in the prepare phase and manipulate the data in ways that will make it more useful to us in the analyze phase. Specifically, we want to address the comprehensive and reliability issues mentioned above.
+
+The first change that will be made to the data is to split it into two subsets; one with the records containing complete data and the other containing records with missing data.
+```{r split data set}
+# split the data set into two
+completed_data = combined_raw_data[rowSums(is.na(combined_raw_data)) == 0,]
+rows_with_missing_data = combined_raw_data[rowSums(is.na(combined_raw_data)) > 0,]
+
+# calculate and show the number and percentage of rows with missing data
+cat(sprintf(" Number of rows with missing values: %d\n", nrow(rows_with_missing_data)),
+    sprintf("Percentage of rows with missing values, %0.2f%%", 100*nrow(rows_with_missing_data)/nrow(combined_raw_data)))
+```
+
+
+Now that we have a subset of data that is complete, we will work on correcting the mistakes so that the data is more reliable. The first correction that will be made is to change the datatype of the start and end times to date-time.
+```{r correct datetime type}
+# convert the start and end times to a date-time format
+completed_data$started_at = ymd_hms(completed_data$started_at)
+completed_data$ended_at = ymd_hms(completed_data$ended_at)
+```
+
+
+Next, as mentioned in the prepare phase, we will filter out rides that have a start time that is greater than or equal to its end time.
+```{r filter out incorrect data}
+completed_data = completed_data %>%
+                  filter(started_at < ended_at)
+```
+
+
+Our next step is the creation of a new column (called ride_length), which uses the start and end times to calculate and store the total duration of the ride.
+```{r create column ride_length}
+completed_data = mutate(completed_data, ride_length = as_hms(difftime(completed_data$ended_at, completed_data$started_at)))
+```
+
+
+Using ride_length, we will filter out other extreme outliers; those being rides that lasted less than one minute or longer than eight hours. These rides are not representative of a normal riding experience.
+```{r filter out outliers}
+completed_data = completed_data %>%
+  filter(ride_length >= 60) %>%
+  filter(ride_length < 28800)
+```
+
+
+The last manipulation to be made is the creation of four more columns: day_of_week, month, start_hour and distance. The first three store the day of week, month and hour of which the ride started, respectively. Lastly, distance calculates and stores the distance (in meters) between the start station and end station. These newly created columns, along with ride_length, will be used in the analyze phase coming up next.
+```{r create complete data set}
+completed_data = completed_data %>%
+                  mutate(day_of_week=weekdays(completed_data$started_at)) %>%
+                  mutate(month = month.abb[as.numeric(format(completed_data$started_at, "%m"))]) %>%
+                  mutate(start_hour = hour(completed_data$started_at)) %>%
+                  mutate(distance = distHaversine(cbind(start_lng, start_lat), cbind(end_lng, end_lat)))
+```
+
+
+Finally, we will take a look at the first few rows of our manipulated data set to ensure that it is clean and reliable.
+```{r check transformed data}
+head(completed_data)
+```
+
+
+#### Summary of the Process Phase
+In this phase, we ensured the integrity of the data by addressing the comprehensive and reliability issues mentioned in the prepare phase. Now focusing on the complete data, we corrected the data type of the started_at and ended_at columns. We also filtered out rides that had a duration of less than one minute or more than eight hours, as those rides are neither typical or representative of a normal riding experience with Cyclistic. Finally, we created the additional columns ride_length, day_of_week, month, start_hour and distance which will all be used extensively to help us in our analysis in the next phase. With this revised data set, we are now better equipped to solve the original business task, which is to determine the differences between how casual riders and annual members use Cyclistic bikes.
+
+
+
+### **Analyze**
+The goal of the analyze phase is to use the data to reach insights and uncover answers and solutions to our original business task: to determine the differences between how casual riders and annual members use Cyclistic bikes. My initial hypothesis is that casual riders use Cyclistic bikes for leisure, while annual members are more likely to use them to commute to and from work. We will do this by comparing the two groups in terms of frequency of rides over various periods of time, time spent riding and distance ridden.
+
+Starting with frequency of rides, we will work our way from visualizing the number of rides by season, then by month, then by day of the week and finally by hour. Let's start by comparing the groups by season. Taking a look at the graphs and data table below, we can see that less casual riders use Cyclistic bikes during the Winter and Spring than annual members, but tend to use them more in the Summer. Also note that the difference between the number of rides in each group in the Fall is not significant. The correlation that could be made here is that casual riders tend to prefer to use Cyclistic bikes in better weather, since it tends to snow and rain more in the Winter and Spring respectively. This reinforces the claim that casual riders generally use the bikes for leisure.
+```{r seasonal comparison, message=FALSE, warning=FALSE}
+# create a data frame to store the number of rides by month, grouped by membership status
+monthly_dist = completed_data %>%
+                group_by(member_casual) %>%
+                count(month) %>%
+                rename(num_rides = n) %>%
+                mutate(pct = round(num_rides/sum(num_rides)*100, 2))
+
+# add a column to store the season in which each ride took place
+monthly_dist = mutate(monthly_dist, season = case_when(
+                month %in% c("Mar", "Apr", "May") ~ "Spring",
+                month %in% c("Jun", "Jul", "Aug") ~ "Summer",
+                month %in% c("Sep", "Oct", "Nov") ~ "Fall",
+                month %in% c("Dec", "Jan", "Feb") ~ "Winter"
+                )
+               )
+# create a data frame to store the data about the number of rides by members
+# per season
+seasonal_data = monthly_dist %>%
+                group_by(member_casual, season) %>%
+                summarize(sum(num_rides)) %>%
+                rename(num_rides = `sum(num_rides)`) %>%
+                mutate(pct = round(num_rides/sum(num_rides)*100, 2))
+
+# plot two pie graphs that show the number of rides by season per group
+ggplot(seasonal_data, aes(x=1, y=num_rides, fill=season)) +
+  geom_col(position="fill") +
+  scale_fill_manual(values = c("brown", "green", "gold", "grey")) +
+  coord_polar(theta="y") +
+  facet_wrap(~member_casual) +
+  ggtitle("Total Number of Rides by Season") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+  labs(x = "", y = "")
+
+# display the data frame to show the percentage of rides per season by group
+data.frame(seasonal_data) %>%
+  arrange(season)
+```
+
+
+Next, comparing the number of rides per month by group, we see that a higher percentage of all casual riders than annual members use Cyclistic bikes from May to September. The percentage of rides from all annual members between October to April is higher than that of casual riders. Again, this supports the correlation between weather and the number of casual riders using Cyclistic bikes. Although poor weather may be more of a deterrent to casual riders, annual members may be more willing to cycle in such conditions because they have already paid for their membership.
+```{r monthly comparison, fig.width = 12}
+# create a vector to store the months of the year in chronological order
+chron_months = c("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# display a double bar graph to compare the number of rides per month by group
+ggplot(monthly_dist, aes(x=factor(month, levels=chron_months), y=num_rides, fill=member_casual, label=num_rides)) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_fill_manual(name = "Membership Status", values = c("olivedrab2", "turquoise4")) +
+  labs(title = "Total Number of Rides by Month", x="Month", y="Total Rides") +
+  geom_text(size=4, position = position_dodge(width = 0.85), vjust=-0.5) +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+# display the accompanying data frame to include the percentages of rides per month
+data.frame(monthly_dist) %>%
+  select(member_casual, month, pct) %>%
+  arrange(levels=c(chron_months, chron_months))
+```
+
+
+Now, comparing the number of rides by day of the week for each group, we see that the highest frequency of rides in the casual riders group occurs on the weekend, while the highest frequency for annual members occurs during the week. This supports the claim that the average casual rider uses Cyclistic bikes for leisure, while annual members are more likely to use the bikes to commute to work.
+```{r daily comparison, fig.width = 12}
+# add a column to store whether each day of the week is a regular weekday or during the weekend
+weekdays = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+weekends = c("Saturday", "Sunday")
+
+# create a data frame to store the number of rides by day of week, grouped by membership status
+daily_dist = completed_data %>%
+                group_by(member_casual) %>%
+                count(day_of_week) %>%
+                rename(num_rides = n) %>%
+                mutate(pct = round(num_rides/sum(num_rides)*100, 2)) %>%
+                mutate(weekday_weekend = ifelse(day_of_week %in% weekdays, "weekday", "weekend"))
+
+# display a double bar graph to compare the number of rides by the day of the week for each group
+ggplot(daily_dist, aes(x=factor(day_of_week, levels=c(weekdays,weekends)), y=num_rides, fill=member_casual, label=num_rides)) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_fill_manual(name = "Membership Status",values = c("olivedrab2", "turquoise4")) +
+  labs(title = "Total Number of Rides by Day of Week", x="Day of Week",
+       y="Total Rides") +
+  geom_text(size=4, position = position_dodge(width = 0.85), vjust=-0.5)  +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+# display the accompanying data frame to include the percentages of rides per day
+data.frame(daily_dist) %>%
+  select(member_casual, day_of_week, pct) %>%
+  arrange(day_of_week)
+```
+
+
+Continuing from the last graph, we will now compare the number of rides by starting hour for each group. Taking a look at the first graph, which compares the number of rides between groups by starting hour during weekdays, we see that there is an influx in rides started from 4:00pm to 6:00pm (which is generally the end of a typical work day) for both members and casual riders. However, there is another peak for members, which is from 7:00am to 8:00am. This could be because many members use Cyclistic bikes to commute to work, while casual riders do not. Casual riders are likely riding for leisure during the peak from 4:00pm to 6:00pm, while members who commuted to work using Cyclistic bikes are more likely using them to commute back home after work. Now, looking at the same metrics in the second graph, but this time only considering weekends, we see that both groups have an almost identical trend. Since the trends are so similar on the weekends, when all riders typically do not have to commute to work; it is again reinforced that many annual members use Cyclistic bikes to commute to work, while most casual riders instead use the bikes for leisure. 
+```{r hourly comparison, fig.width = 12}
+# create a data frame to store the number of rides by starting hour during the week, grouped by membership status
+hourly_dist_weekdays = completed_data %>%
+                        filter(day_of_week %in% weekdays) %>%
+                        group_by(member_casual) %>%
+                        count(start_hour) %>%
+                        rename(num_rides=`n`)
+
+# make subsets of the data, one for members and another for casual riders so that they can be plotted separately
+weekday_members_by_hour = filter(hourly_dist_weekdays, member_casual=="member")
+weekday_casuals_by_hour = filter(hourly_dist_weekdays, member_casual=="casual")
+
+# display a double line graph to compare the number of rides by starting hour for weekdays between groups
+ggplot() +
+  geom_line(data=weekday_members_by_hour, mapping=aes(x=start_hour, y=num_rides, color="turquoise4")) +
+  geom_point(data=weekday_members_by_hour, mapping=aes(x=start_hour, y=num_rides, color="turquoise4")) +
+  geom_line(data=weekday_casuals_by_hour, mapping=aes(x=start_hour, y=num_rides, color="olivedrab2")) +
+  geom_point(data=weekday_casuals_by_hour, mapping=aes(x=start_hour, y=num_rides, color="olivedrab2")) +
+  labs(title = "Total Rides by Starting Hour During Weekdays", x="Starting Hour", y="Total Rides", color = "Membership Status") +
+  scale_color_identity(guide="legend", labels=c("Casual", "Member")) +
+  scale_y_continuous(labels = label_comma())
+
+# create a data frame to store the number of rides by starting hour during the weekend, grouped by membership status
+hourly_dist_weekends = completed_data %>%
+                        filter(day_of_week %in% weekends) %>%
+                        group_by(member_casual) %>%
+                        count(start_hour) %>%
+                        rename(num_rides=`n`)
+
+# make subsets of the data, one for members and another for casual riders so that they can be plotted separately
+weekend_members_by_hour = filter(hourly_dist_weekends, member_casual=="member")
+weekend_casuals_by_hour = filter(hourly_dist_weekends, member_casual=="casual")
+
+# display a double line graph to compare the number of rides by starting hour for weekends between groups
+ggplot() +
+  geom_line(data=weekend_members_by_hour, mapping=aes(x=start_hour, y=num_rides, color="turquoise4")) +
+  geom_point(data=weekend_members_by_hour, mapping=aes(x=start_hour, y=num_rides, color="turquoise4")) +
+  geom_line(data=weekend_casuals_by_hour, mapping=aes(x=start_hour, y=num_rides, color="olivedrab2")) +
+  geom_point(data=weekend_casuals_by_hour, mapping=aes(x=start_hour, y=num_rides, color="olivedrab2")) +
+  labs(title = "Total Rides by Starting Hour During Weekdays", x="Starting Hour", y="Total Rides", color = "Membership Status") +
+  scale_color_identity(guide="legend", labels=c("Casual", "Member")) +
+  scale_y_continuous(labels = label_comma())
+```
+
+
+That concludes the analysis of the frequency of rides for different periods of time. To summarize, rides by casual riders are more concentrated in the Summer and Fall (specifically from May to September). Although this is also the case with annual members, there is less variance in the casual riders group. Furthermore, the highest frequency of rides by casual riders occurs on the weekends, while that of annual members occurs during the week. Finally, although the number of rides by starting hour are similar between groups on the weekends; during the week, annual members tend to have an influx of rides started between 7:00am and 8:00, which are common commuting hours. This evidence supports that casual riders typically use Cyclistic bikes for leisure, while annual members are more likely to use them to commute to and from work.
+
+Now, we will compare the average ride duration between groups by the day of the week. From the graph below, we can see that on average casual riders spend a significantly longer time, almost twice as long, per ride than annual members. This is the case throughout the entirety of the week; during the work week when there are many more annual members using the bikes and during weekends when that is not the case. This is another indication that casual riders use Cyclistic bikes for leisure, as the data supports that they are likely not in a rush and using the bike as a form of faster transportation than walking. Also note that there is more variance in the average duration in the casual riders group than in the annual members group. The average duration in the annual members group is quite stable during the work week, again providing supporting evidence that they use Cyclistic bikes to commute to and from work, which is quite possible in about 11 or 12 minutes. 
+```{r daily duration comparison, fig.width=12, message=FALSE, warning=FALSE}
+# create a data frame to store the average length ridden by day of the week, grouped by membership status
+daily_avg_length = completed_data %>%
+                    group_by(member_casual,day_of_week) %>%
+                    summarize(mean(ride_length)) %>%
+                    rename(average_ride_length = `mean(ride_length)`)
+
+# display a double bar graph to compare the average ride duration by the day of the week for each group
+ggplot(daily_avg_length, aes(x=factor(day_of_week, levels=c(weekdays,weekends)), y=average_ride_length, fill=member_casual, label=round(average_ride_length/60,2))) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_fill_manual(name = "Membership Status", values = c("olivedrab2", "turquoise4")) +
+  labs(title = "Average Ride Duration by Day", x="Day of Week", y="Average Ride Duration (in minutes)") +
+  geom_text(size=4, position = position_dodge(width = 0.85), vjust=-0.5) +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+```
+
+
+Finally, we will take a look at the differences in average distance between the start and end stations for each group. It is important to note that this is not the total distance ridden, but the distance between the station where the rider picked up their bike to start a trip and the station where they dropped it off to end a trip. Looking at the graph below, the distance between start and end stations for casual riders is slightly more than annual members; however this does not seem like a significant difference. Also, considering that the average duration spent riding by casual riders is generally almost double that of annual members, the lack of a significant difference in the average distance implies that casual riders could be riding at a slower and more leisurely pace. Alternatively, it may be the case that casual riders are less likely to take a direct route if they are riding for leisure. Consequently, the additional time that they ride would not be reflected in the distance between their start and end stations. The last scenario to explain this is that the average distance could have been reduced by multiple calculated distances of 0, which would be the case when a trip is started and ended at the same station. Looking at the second output, which is a data frame that contains the total number and percentage of rides that start and end at the same station, we see that casual riders tend to fit in this scenario more frequently. Again, this is more supporting evidence that casual riders use Cyclistic bikes for leisure, while annual members are more likely to use the bike to commute to and from work.
+```{r daily distance comparison, fig.width=12, message=FALSE, warning=FALSE}
+daily_avg_distance = completed_data %>%
+                      select(member_casual, day_of_week, distance) %>%
+                      group_by(member_casual, day_of_week) %>%
+                      summarize(mean(distance)) %>%
+                      rename(average_distance = `mean(distance)`)
+
+# display a double bar graph to compare the average difference in distance between start and end station by the day of the week for each group
+ggplot(daily_avg_distance, aes(x=factor(day_of_week, levels=c(weekdays,weekends)), y=average_distance, fill=member_casual, label=round(average_distance,2))) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_fill_manual(name = "Membership Status", values = c("olivedrab2", "turquoise4")) +
+  labs(title = "Average Distance Between Start and End Station by Day", x="Day of Week", y="Average Distance (in meters)") +
+  geom_text(size=4, position = position_dodge(width = 0.85), vjust=-0.5) +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+# create variables to store the total number of rides by members and casual riders respectively
+num_members = nrow(filter(completed_data, member_casual == "member"))
+num_casuals = nrow(filter(completed_data, member_casual == "casual"))
+
+# create variables to store the total number of rides by members and casual riders respectively where the bike was picked up and dropped off at the same station
+num_members_zero_distance = completed_data %>%
+                            filter(member_casual == "member") %>%
+                            filter(distance == 0) %>%
+                            nrow()
+num_casuals_zero_distance = completed_data %>%
+                            filter(member_casual == "casual") %>%
+                            filter(distance == 0) %>%
+                            nrow()
+
+# create and output a data frame that contains the calculated totals and percentages for each group
+membership_status = c("member", "casual")
+num_zero_distance_rides = c(num_members_zero_distance, num_casuals_zero_distance)
+percentage = c(round(100 * num_members_zero_distance / num_members, 2), round(100 * num_casuals_zero_distance / num_casuals, 2))
+data.frame(membership_status, num_zero_distance_rides, percentage)
+```
+
+
+#### Summary of the Analyze Phase
+In this phase, we analyzed and visualized the data to reach insights about the differences in how casual riders and annual members use Cyclistic bikes. Firstly, we found that casual riders are less likely to use Cyclistic bikes in the Winter and Spring (specifically between October and April) than annual members, presumably due to harsher weather conditions. Secondly, the highest frequency of rides by casual riders occurs on the weekends, while that of annual members occurs during the week. Thirdly, although the number of rides by starting hour are similar between groups on the weekends; during the week, annual members tend to have an influx of rides started between 7:00am and 8:00am, which are common commuting hours. This suggests that annual members are more likely to be using Cyclistic bikes to commute to and from work than casual riders. Furthermore, on average casual riders spend a significantly longer time, almost twice as long, per ride than annual members. Also note that there is more variance in the average duration in the casual riders group than in the annual members group. The average duration in the annual members group is quite stable during the work week. Finally, the average distance between the start and end station for each group are very similar. Given that casual riders, on average, spend almost twice as long riding, I presume that this is a result of one of the following three cases. Either casual riders cover a similar overall distance to annual members but ride at a slower and more leisurely pace, or they spend more time and cover more distance but do not take a direct route from their start station to end station, or they more often start and end at the same station. All three of these cases describe a scenario in which a casual rider would use a Cyclistic bike for leisure.
+
+
+### **Share**
+The full slide deck for the presentation can be found here: <https://github.com/Daniel-Prashad/CyclisticCaseStudy>
+
+Below is a summary of the findings.
+
+The data supports the idea that casual riders use Cyclistic bikes for leisure, while annual members are more likely to use them to commute to and from work. 
+
+The three main factors leading to this conclusion are:
+
+1. **Casual riders prefer better weather conditions more than annual members**
+  + Casual riders more strongly opt to ride during the *Summer*
+  + Casual riders are more likely to use Cyclistic bikes from *May to September* than members
+    + This is likely because the *temperature* and *lack of precipitation* are more suitable for a leisurely ride
+    
+2. **Casual riders ride more frequently on the weekends, while annual members ride more frequently during the week**
+  + Both groups have *similar trends* in the number of rides by hour on the *weekends*
+  + Both groups have an influx of rides started from 4:00pm to 6:00pm during the week
+  + Annual members have an additional peak during the week, from *7:00am to 8:00am* (common commuting hours)
+  
+3. **On average, casual riders spend almost twice as long per ride than members, but do not end their ride much further**
+  + This could be because casual riders are more likely to:
+      i. Ride at a slower and more *leisurely pace*
+     ii. *Not take a direct route* between their start and end stations 
+    iii. Start and end at the *same station*
+
+
+### **Act**
+Before an effective marketing strategy aimed to convert casual riders to annual members can be developed, I would suggest that the next step be to *collect additional data to reaffirm the conclusions drawn above*.
+
+Specifically, my suggestions are to:
+
+1. **Employ a randomly generated Rider ID for each user**
+  + This will help better track the riding habits of a single user
+  
+2. **Collect the *temperature* and *precipitation* (dry/rain/snow) for the start of each trip**
+  + This will help better describe the relationship between each group and weather
+  
+3. **Collect the *total distance* ridden during each ride**
+  + This will help better understand the relationship between ride duration and distance
+
+Once this data is collected, a similar analysis can be redone in order to increase the confidence of the conclusions drawn in this analysis. This will help better understand the differences between how casual riders and annual members use Cyclistic bikes. At that point, the marketing team would be better equipped to devise an effective marketing strategy aimed to convert casual riders to annual members.
