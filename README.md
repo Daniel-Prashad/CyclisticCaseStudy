@@ -3,6 +3,10 @@
 ## Scenario
 In this case study, I am a data analyst working with the marketing team at a Chicago-based bike-share company called Cyclistic. The director of marketing wants to create a marketing strategy aimed to convert casual riders (those who purchase single-ride or full-day passes) into annual members. My team wants to first understand how casual riders and annual members use Cyclistic bikes differently. Using the insights gained from this analysis, the marketing team can be better equipped to devise an effective marketing strategy.
 
+## Data
+The data used in this project can be found here: <https://divvy-tripdata.s3.amazonaws.com/index.html>
+This project used 12 months of data, between March 2023 and Febraury 2024.
+
 ## Analytical Approach
 The goal of the analysis is to determine the differences between how casual riders and annual members use Cyclistic bikes. The inital hypothesis regarding this difference is that casual riders mostly use Cyclistic bikes for leisure, while annual members are more likely to use them to commute to and from work. The approach to end at this hypothesis is to analyze the differences in each group's relationship to:
   1. Weather
